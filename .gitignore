@@ -1,0 +1,4 @@
+*.log
+*.csv
+prefix/
+zwift-dl/
