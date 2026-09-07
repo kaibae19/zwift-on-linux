@@ -7,6 +7,11 @@ Verified working: **Zwift 1.120.0 (game 1.0.164452), launcher 1.1.18,
 wine-staging 11.16 and vanilla wine 10.0, Ubuntu 26.04, NVIDIA 595.84** —
 September 2026.
 
+![Zwift running on Ubuntu 26.04 under wine — Watopia at sunset, with fastfetch showing the host details](docs/zwift-on-linux.jpg)
+
+*Zwift in Watopia at 4K on Ubuntu 26.04 (GNOME 50.1 / Wayland), wine-staging
+11.16, RTX 5060 Ti.*
+
 > ### This is a moving target
 >
 > Zwift force-updates often and changes its launcher, its .NET dependencies and
