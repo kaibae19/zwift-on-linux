@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # Launch Zwift under wine.
 #
-# Flow: start the launcher (it patches/updates), start the game via
-# RunFromProcess, close the launcher, then tear down the prefix when the game
-# exits.
+# Two modes, chosen automatically:
 #
-# ON WINE-STAGING 11.16+ the launcher UI renders properly and you can simply run
-# ZwiftLauncher.exe and click Play instead of using this script — that path also
-# passes an auth token to the game so it logs in automatically. This script
-# exists to give a one-click launch that works on both staging and vanilla wine.
+#   LAUNCHER MODE (default when wine-staging is present)
+#     Starts the launcher and leaves it alone. Its UI renders on staging, so you
+#     log in there and click Play — which passes an auth token to the game, so it
+#     logs in automatically. You also get update prompts and download progress.
+#     The script then just waits and tears the prefix down when you quit.
 #
-# ON VANILLA/DISTRO WINE the launcher window is blank (see README: wine's
-# DirectComposition gap). The game still starts via RunFromProcess; log in inside
-# the game itself.
+#   AUTOSTART MODE (default on vanilla/distro wine)
+#     The launcher window is blank there (README: wine's DirectComposition gap),
+#     so there is nothing to click. RunFromProcess starts the game directly and
+#     the useless blank launcher is closed once the game is up. Log in inside the
+#     game itself.
+#
+# Override with ZWIFT_MODE=launcher or ZWIFT_MODE=autostart.
 set -euo pipefail
 
 export WINEPREFIX="${WINEPREFIX:-$HOME/Games/zwift/prefix}"
@@ -51,34 +54,50 @@ proc_running() { ps -eo args --no-headers 2>/dev/null | grep -qE "$1"; }
 launcher_running() { proc_running '^(.*\\)?ZwiftLauncher\.exe([[:space:]]|$)'; }
 game_running()     { proc_running '^(.*\\)?ZwiftApp\.exe([[:space:]]|$)'; }
 
+# Staging renders the launcher UI, so there is something worth clicking.
+if [ -z "${ZWIFT_MODE:-}" ]; then
+  if [ -x /opt/wine-staging/bin/wine ]; then ZWIFT_MODE=launcher; else ZWIFT_MODE=autostart; fi
+fi
+
 if ! launcher_running; then
   wine ZwiftLauncher.exe >"${TMPDIR:-/tmp}/zwift-launcher.log" 2>&1 &
   sleep 25
 fi
 
-# RunFromProcess starts the game from the launcher's process context and exits
-# immediately — it is not the game's parent, so we cannot just wait on it.
-wine RunFromProcess-x64.exe ZwiftLauncher.exe ZwiftApp.exe
+if [ "$ZWIFT_MODE" = autostart ]; then
+  # RunFromProcess starts the game from the launcher's process context and exits
+  # immediately — it is not the game's parent, so we cannot just wait on it.
+  wine RunFromProcess-x64.exe ZwiftLauncher.exe ZwiftApp.exe
+else
+  echo "Launcher mode: log in and click Play. (ZWIFT_MODE=autostart to skip the UI.)"
+fi
 
 # Wait for the game to appear. Generous: login, patching and asset load can be
 # slow. If it never shows, leave everything alone and exit quietly.
 appeared=0
-for _ in $(seq 1 150); do            # up to ~5 min
+for _ in $(seq 1 450); do            # up to ~15 min (login takes as long as it takes)
   if game_running; then appeared=1; break; fi
   sleep 2
 done
 [ "$appeared" -eq 1 ] || exit 0
 
-# Game is up, so patching is done and the launcher has no further job. Closing it
-# by PID is safe — the game depends on wineserver, not the launcher (tested:
-# SIGTERM to the launcher alone leaves the game running indefinitely).
+# In autostart mode the blank launcher has no further job once the game is up, so
+# close it. Closing it by PID is safe — the game depends on wineserver, not the
+# launcher (tested: SIGTERM to the launcher alone leaves the game running
+# indefinitely).
 #
-# Do NOT use Zwift's own CloseLauncher.exe: it matches processes by name and
-# kills ZwiftApp too, truncating the in-progress activity .fit. That is almost
-# certainly the origin of the "never close the launcher" folklore.
-launcher_pid=$(ps -eo pid,args --no-headers 2>/dev/null \
-               | awk '$2 ~ /^(.*\\)?ZwiftLauncher\.exe$/ {print $1; exit}')
-[ -n "${launcher_pid:-}" ] && kill -TERM "$launcher_pid" 2>/dev/null || true
+# In launcher mode we deliberately leave it alone: on staging its UI is useful,
+# and killing it here would also cut short the window you just logged in through
+# (it can take tens of seconds to finish painting).
+#
+# Either way: do NOT use Zwift's own CloseLauncher.exe. It matches processes by
+# name and kills ZwiftApp too, truncating the in-progress activity .fit. That is
+# almost certainly the origin of the "never close the launcher" folklore.
+if [ "$ZWIFT_MODE" = autostart ]; then
+  launcher_pid=$(ps -eo pid,args --no-headers 2>/dev/null \
+                 | awk '$2 ~ /^(.*\\)?ZwiftLauncher\.exe$/ {print $1; exit}')
+  [ -n "${launcher_pid:-}" ] && kill -TERM "$launcher_pid" 2>/dev/null || true
+fi
 
 # Wait for the game to exit.
 while game_running; do sleep 1; done

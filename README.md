@@ -86,8 +86,17 @@ cd zwift-on-linux
 ./zwift.sh                   # launch
 ```
 
-On **wine-staging** the launcher UI works: log in there and click Play.
-On **vanilla wine** the launcher is blank — log in inside the game instead.
+`zwift.sh` picks its behaviour from whether wine-staging is installed:
+
+| | |
+|---|---|
+| **launcher mode** (staging) | Starts the launcher and leaves it alone. Log in there and click Play — the game gets an auth token and logs in automatically. You also see update prompts and download progress. |
+| **autostart mode** (vanilla) | The launcher is blank, so there is nothing to click. RunFromProcess starts the game directly and the blank launcher is closed once the game is up. Log in inside the game. |
+
+Force either with `ZWIFT_MODE=launcher` / `ZWIFT_MODE=autostart`.
+
+Note the launcher can take tens of seconds to finish painting on staging — it
+starts blank and fills in. Don't assume it failed.
 
 ## What the install actually does
 
