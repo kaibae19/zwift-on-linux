@@ -5,7 +5,8 @@ costs people hours and isn't documented anywhere obvious.
 
 Verified working: **Zwift 1.120.0 (game 1.0.164452), launcher 1.1.18,
 wine-staging 11.16 and vanilla wine 10.0, Ubuntu 26.04, NVIDIA 595.84** —
-September 2026.
+September 2026. On staging the launcher UI renders, so login and *Let's Go* work
+exactly as on Windows; the game runs at 4K, ~60 FPS.
 
 ![Zwift running on Ubuntu 26.04 under wine — Watopia at sunset, with fastfetch showing the host details](docs/zwift-on-linux.jpg)
 
@@ -72,10 +73,16 @@ Wrong turns worth skipping, all of which look plausible:
   and it works under wine.
 - An interrupted installer is **not** the bug.
 
-**Status of the scripts:** every step here was verified by hand on a working
-install, and `zwift.sh` is in daily use. `install-zwift-wine.sh` encodes that
-same sequence but has not yet been run start-to-finish on a clean machine — if
-you hit a snag running it fresh, an issue would be genuinely useful.
+**Status of the scripts:** `install-zwift-wine.sh` runs start-to-finish in a
+clean Ubuntu 26.04 container in CI, asserting that .NET 4.8 lands and the
+launcher does not exit 200. `zwift.sh` is in daily use; the launcher-mode flow
+(launcher paints → log in → *Let's Go* → game starts at 4K with an auth token,
+no second login) is verified on wine-staging 11.16.
+
+Still unproven: **a real forced Zwift update.** The patch-waiting logic is
+written and its primitives tested, but the only download observed so far was the
+initial ~4.7 GiB, driven by hand rather than through these scripts. If you hit an
+update and something goes sideways, an issue would be genuinely useful.
 
 ## Quick start
 
