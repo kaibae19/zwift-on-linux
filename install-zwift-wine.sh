@@ -81,7 +81,15 @@ mkdir -p "$DL"
 # Inno Setup. Bundled prerequisites (VC++ redist, DirectX, WebView2) install fine
 # under wine. ZwiftSetup.exe is 32-bit but runs via new-WoW64 with no i386 packages.
 wine "$DL/ZwiftSetup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL || true
-wineserver -w
+
+# Do NOT `wineserver -w` here. Inno's post-install step starts
+# "ZwiftLauncher.exe UpdateLaunch", which stays running indefinitely, so waiting
+# for all wine processes to exit hangs forever. (This only shows up once .NET 4.8
+# is working — with wine-mono the launcher exited 200 by itself and masked it.)
+# Give the installer a moment to finish writing, then tear the prefix down.
+sleep 5
+wineserver -k >/dev/null 2>&1 || true
+sleep 2
 [ -f "$ZDIR/ZwiftLauncher.exe" ] || { echo "FATAL: Zwift did not install to $ZDIR"; exit 1; }
 
 # --- RunFromProcess ---------------------------------------------------------

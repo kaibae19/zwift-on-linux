@@ -3,8 +3,9 @@
 Running Zwift under wine, written down properly — including the failure that
 costs people hours and isn't documented anywhere obvious.
 
-Verified working: **Zwift 1.120.0 (game 1.0.164452), launcher 1.1.18, wine 10.0,
-Ubuntu 26.04, NVIDIA 595.84** — September 2026.
+Verified working: **Zwift 1.120.0 (game 1.0.164452), launcher 1.1.18,
+wine-staging 11.16 and vanilla wine 10.0, Ubuntu 26.04, NVIDIA 595.84** —
+September 2026.
 
 > ### This is a moving target
 >
@@ -15,6 +16,33 @@ Ubuntu 26.04, NVIDIA 595.84** — September 2026.
 > Issues and PRs correcting drift are very welcome.
 
 ---
+
+## Use wine-staging, not your distro's wine
+
+**wine-staging 11.16+ makes the launcher UI render.** On distro/vanilla wine the
+launcher is a blank window (wine's DirectComposition gap — details below), which
+means no login screen, no update prompts and no visible progress. On staging it
+works like it does on Windows: log in, click Play, the game starts with an auth
+token already passed to it.
+
+```bash
+sudo mkdir -pm755 /etc/apt/keyrings
+curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/winehq-archive.gpg
+sudo curl -fsSL -o /etc/apt/sources.list.d/winehq-$(lsb_release -cs).sources \
+  "https://dl.winehq.org/wine-builds/ubuntu/dists/$(lsb_release -cs)/winehq-$(lsb_release -cs).sources"
+# the .sources file ships Signed-By pointing at a .key; repoint it at the .gpg:
+sudo sed -i 's#winehq-archive.key#winehq-archive.gpg#' \
+  /etc/apt/sources.list.d/winehq-$(lsb_release -cs).sources
+sudo apt update && sudo apt install winehq-staging
+```
+
+Staging installs to `/opt/wine-staging/bin` and does **not** put `wine` on your
+`PATH`. Everything here accounts for that.
+
+Everything below still applies on staging — the .NET 4.8 requirement especially.
+The vanilla-wine workarounds (RunFromProcess, logging in inside the game) still
+work on staging too, and remain documented for anyone stuck on distro packages.
 
 ## The one that will get you
 
@@ -53,7 +81,8 @@ cd zwift-on-linux
 ./zwift.sh                   # launch
 ```
 
-Then **log in inside the game**, not in the launcher (see below).
+On **wine-staging** the launcher UI works: log in there and click Play.
+On **vanilla wine** the launcher is blank — log in inside the game instead.
 
 ## What the install actually does
 
@@ -67,11 +96,63 @@ Then **log in inside the game**, not in the launcher (see below).
 
 ## Gotchas
 
-### The launcher window is blank — that's normal
+### The blank launcher on vanilla wine — cause, and the fix
 
-It renders white, then black. WebView2 runs fine but cannot paint into the wine
-window. **You do not log in there.** Log in inside the game itself. The launcher
-still does its real job (patching and downloading) invisibly.
+**Fixed by wine-staging 11.16+** (see the top of this README). This section
+explains the failure you'll see on distro/vanilla wine, and why the workarounds
+people usually reach for don't help.
+
+On vanilla wine it renders white, then black. **You do not log in there** — log
+in inside the game. The launcher still does its real job (patching and
+downloading) invisibly.
+
+Every guide says "it's blank, that's normal" without saying why. The cause is
+specific, and it's what tells you that staging is the fix.
+
+WebView2 initialises perfectly — the log says so, and the `msedgewebview2`
+process runs happily. Chromium renders fine. What fails is the **hand-off to the
+window**. Launching with `WINEDEBUG=+loaddll` shows the launcher loading
+`dcomp.dll` and hitting:
+
+```
+fixme:dcomp:DCompositionCreateDevice3 ...
+fixme:dwmapi:DwmAttachMilContent (...) stub
+```
+
+Zwift hosts WebView2 in **visual/composition mode**, so content is rendered into
+a DirectComposition visual tree. wine's DirectComposition is partial, and
+`DwmAttachMilContent` — the call that attaches that tree to a visible window —
+is a **pure stub**. The content is drawn and then goes nowhere.
+
+**No Chromium flag fixes this.** A sweep of `--disable-features=CalculateNativeWinOcclusion`,
+`--disable-direct-composition`, `--disable-gpu-compositing`, and combinations,
+all measured, produced a uniformly black window every time. Occlusion detection
+and GPU compositing are not the problem; the composition-to-window bridge is, and
+it lives below anything the browser arguments reach.
+
+**The fix is wine-staging**, whose dcomp patchset implements enough of
+DirectComposition for the composed content to reach the window. Confirmed here:
+vanilla wine 10.0 → blank; wine-staging 11.16, same prefix → UI renders, login
+works, Play button launches the game.
+
+A useful diagnostic: on staging the `fixme:dcomp` count goes *up*, not down —
+from a single failed `DCompositionCreateDevice3` to ~26 messages across
+`dcomp:device` and `dcomp:visual`. That's progress, not regression: staging
+actually implements composition devices and visuals and only logs the individual
+methods still missing, instead of failing at the first call.
+
+Related WineHQ bug: [58921](https://bugs.winehq.org/show_bug.cgi?id=58921).
+Note the per-application `Version=win7`/`win8` override for `msedgewebview2.exe`
+described there did **not** work here with WebView2 152.0.4191.66 on wine 10.0 —
+neither per-app nor with the whole prefix set to win8. Staging is what fixed it.
+
+**Why it matters beyond cosmetics:** on vanilla, the launcher is Zwift's channel
+for update prompts, progress, errors and maintenance notices, and none of it is
+visible. If Zwift ever moved login exclusively into the launcher UI, vanilla wine
+would break entirely — in-game login is load-bearing there, not incidental.
+
+If you're stuck on vanilla, read `Launcher_log.txt` instead of the window. It
+reports update checks, per-file download progress and completion.
 
 ### You CAN close the launcher once the game is up — but not with CloseLauncher.exe
 
@@ -123,8 +204,20 @@ truncates comm to 15 chars (`ZwiftLauncher.e`). And `pgrep -f` is useless becaus
 `wine RunFromProcess-x64.exe ZwiftLauncher.exe ZwiftApp.exe` carries both names
 in its own command line. Match the first token of `args`:
 
+The game also appears in **two different forms** depending on how it started:
+
+```
+ZwiftApp.exe                                                    <- via RunFromProcess
+C:\Program Files (x86)\Zwift\ZwiftApp.exe --token=...          <- via launcher Play button
+```
+
+The second has spaces in the path, so awk field matching fails. Anchor the
+basename at the start of args instead — this matches both, and does not
+false-positive on `wine RunFromProcess-x64.exe ZwiftLauncher.exe ZwiftApp.exe`,
+which contains both names in its own command line:
+
 ```bash
-ps -eo args --no-headers | awk '$1=="ZwiftApp.exe"{f=1} END{exit !f}'
+ps -eo args --no-headers | grep -qE '^(.*\\)?ZwiftApp\.exe([[:space:]]|$)'
 ```
 
 ### `.desktop` shortcuts: no `Path=` key
@@ -239,6 +332,29 @@ https://cdn.zwift.com/gameassets/Zwift_Updates_Root/Zwift_ver_cur.xml
 | `.desktop` "has errors or points to a program without permissions" | A `Path=` key containing a colon |
 | Companion can't find the PC | Phone on a different subnet, or broadcast on a virtual bridge |
 | `pgrep` says the game isn't running | Its comm is `main`; match on args |
+
+## Testing
+
+There's a clean-room test that runs the real installer in a container:
+
+```bash
+./test/run-test.sh            # build + run  (~10-15 min; dotnet48 is slow)
+./test/run-test.sh --shell    # poke around inside instead
+```
+
+It asserts the things that actually break:
+
+- **.NET 4.8 is installed** (`Release=0x00080eb1`) and **wine-mono is gone**
+- `wineserver` resolves on `PATH` — the trap that makes winetricks a silent no-op
+- Zwift, `RunFromProcess` and `d3dcompiler_47` all landed
+- **`ZwiftLauncher.exe` does not exit 200** — the regression test this repo exists for
+
+It also runs weekly in CI, because Zwift changes underneath this guide and it's
+better for a scheduled job to notice than for you to discover it mid-build.
+
+**What it cannot check:** there's no GPU and no real display in the container, so
+rendering, frame rate, sensors and the game itself are out of scope. It validates
+the install path only.
 
 ## Contributing
 

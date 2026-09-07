@@ -1,0 +1,40 @@
+name: install test
+
+# Zwift is a moving target — it force-updates and changes its launcher, .NET
+# dependencies and login flow without warning. This runs the real installer in a
+# clean container so drift gets caught here rather than by someone mid-build.
+#
+# Deliberately NOT run on every push: the job downloads from Zwift's CDN and
+# nirsoft.net, so it is inherently a bit flaky and slow. Weekly + on demand is
+# the useful cadence.
+on:
+  schedule:
+    - cron: '0 6 * * 1'      # Mondays 06:00 UTC
+  workflow_dispatch:
+  push:
+    paths:
+      - 'install-zwift-wine.sh'
+      - 'zwift.sh'
+      - 'test/**'
+      - '.github/workflows/install-test.yml'
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test image
+        run: docker build -f test/Dockerfile -t zwift-on-linux-test .
+
+      - name: Run installer in a clean container
+        run: docker run --rm zwift-on-linux-test
+
+# What a failure here means:
+#   ".NET 4.8 NOT installed"      -> winetricks/dotnet48 broke, or wineserver
+#                                    fell off PATH and winetricks silently
+#                                    no-opped (it exits 0 when that happens)
+#   "launcher exited 200"         -> the wine-mono failure mode is back
+#   "ZwiftLauncher.exe missing"   -> Zwift changed its installer or CDN URL
+#   "RunFromProcess missing"      -> nirsoft.net moved or blocked the download
