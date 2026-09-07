@@ -27,9 +27,9 @@ if [ "${SKIP_DEPS:-0}" != "1" ]; then
   if command -v apt-get >/dev/null 2>&1; then
     echo "==> [1/6] packages"
     sudo apt-get install -y --no-install-recommends \
-        wine winetricks cabextract xdotool
+        wine winetricks cabextract
   else
-    echo "==> [1/6] non-apt system: install wine, winetricks, cabextract, xdotool yourself"
+    echo "==> [1/6] non-apt system: install wine, winetricks, cabextract yourself"
     echo "    then re-run with SKIP_DEPS=1"
     exit 1
   fi
@@ -130,8 +130,10 @@ Done.  Launch with:  $LAUNCHER
 
   * The launcher window will be BLANK white/black. That is normal — WebView2
     cannot paint into the wine window. Log in INSIDE THE GAME, not the launcher.
-  * Never close the launcher while playing; it is the game's parent process and
-    killing it kills the game (and truncates your activity .fit).
+  * zwift.sh closes the launcher for you once the game is up. Closing it by PID
+    is safe; the game depends on wineserver, not the launcher. Do NOT use
+    Zwift's own CloseLauncher.exe — it kills ZwiftApp too and truncates your
+    activity .fit.
   * Sensors: use the Zwift Companion app. Direct BLE cannot work under wine.
     Your phone must be on the same subnet as this machine.
 EOF

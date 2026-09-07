@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Launch Zwift under wine, and clean up the launcher after the game exits.
+# Launch Zwift under wine.
+#
+# Flow: start the launcher (it patches/updates), let it start the game via
+# RunFromProcess, then close the launcher so its blank window goes away, and
+# finally tear down the prefix once the game exits.
 #
 # The launcher window is blank white/black — normal. WebView2 runs but cannot
 # paint into the wine window. Do not log in there; log in inside the game.
-#
-# The launcher process MUST stay alive while playing: RunFromProcess starts
-# ZwiftApp as a CHILD of the launcher, so killing the launcher kills the game
-# (it dies instantly and the in-progress activity .fit is left truncated).
-# So we leave it alone during play and only tear it down once the game exits.
 set -euo pipefail
 
 export WINEPREFIX="${WINEPREFIX:-$HOME/Games/zwift/prefix}"
@@ -61,12 +60,25 @@ for _ in $(seq 1 150); do            # up to ~5 min
 done
 [ "$appeared" -eq 1 ] || exit 0
 
-# Game is up. Wait for it to exit, then shut the prefix down so the blank
-# launcher window does not linger.
+# Game is up, so patching is done and the launcher has no further job. Close it
+# and the blank window goes away.
+#
+# This IS safe, contrary to a lot of guides (and an earlier version of this
+# script). Tested: SIGTERM to the launcher alone left the game running
+# indefinitely — VRAM steady, log still advancing, ZwiftApp simply reparented.
+# The game depends on *wineserver*, not on the launcher.
+#
+# What is NOT safe is Zwift's own CloseLauncher.exe: it matches processes by
+# name and kills ZwiftApp too, truncating the in-progress activity .fit. That is
+# almost certainly where the "never close the launcher" folklore comes from.
+# Kill the launcher PID directly; never use CloseLauncher.exe.
+launcher_pid=$(ps -eo pid,args --no-headers 2>/dev/null | awk '$2=="ZwiftLauncher.exe"{print $1; exit}')
+[ -n "${launcher_pid:-}" ] && kill -TERM "$launcher_pid" 2>/dev/null || true
+
+# Wait for the game to exit.
 while game_running; do sleep 1; done
 
 # Deliberate pause: ZwiftApp flushes the in-progress activity .fit on exit, and
-# tearing the prefix down too early truncates it. Do NOT remove this to shave a
-# couple of seconds off the blank window disappearing.
+# tearing the prefix down too early truncates it. Do NOT remove this.
 sleep 3
 wineserver -k >/dev/null 2>&1 || true

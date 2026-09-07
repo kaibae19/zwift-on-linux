@@ -57,7 +57,7 @@ Then **log in inside the game**, not in the launcher (see below).
 
 ## What the install actually does
 
-1. Installs `wine winetricks cabextract` (+ `xdotool` for window handling)
+1. Installs `wine winetricks cabextract`
 2. Creates a 64-bit prefix
 3. `winetricks -q dotnet48 d3dcompiler_47 win10` — **real .NET, not wine-mono**
 4. Runs Zwift's installer silently; its bundled VC++ redist, DirectX and
@@ -73,13 +73,25 @@ It renders white, then black. WebView2 runs fine but cannot paint into the wine
 window. **You do not log in there.** Log in inside the game itself. The launcher
 still does its real job (patching and downloading) invisibly.
 
-### The launcher must stay running — never close it mid-game
+### You CAN close the launcher once the game is up — but not with CloseLauncher.exe
 
-`RunFromProcess` starts `ZwiftApp.exe` as a **child** of the launcher, so killing
-the launcher kills the game. Zwift ships its own `CloseLauncher.exe`; on Windows
-that's safe, under wine it is not — it takes the game down instantly and leaves
-the in-progress activity `.fit` truncated. Close the launcher only *after* the
-game exits. `zwift.sh` does this for you.
+Widely-repeated advice says the launcher must stay running for the whole session.
+**Tested, and that is not true** — at least not for the reason usually given.
+
+`kill -TERM` on the launcher PID alone leaves the game running indefinitely:
+VRAM steady, log still advancing, `ZwiftApp` simply reparented. The game depends
+on **wineserver**, not on the launcher.
+
+What *is* fatal is Zwift's own **`CloseLauncher.exe`**. It enumerates processes,
+matches by name and calls `Kill` — and it takes `ZwiftApp` down with the
+launcher, truncating the in-progress activity `.fit` (observed: 1102 bytes vs a
+normal 1533). On Windows it's fine; under wine it is not. That is almost
+certainly where the folklore comes from.
+
+So: once the game is running, `kill -TERM` the launcher PID directly and the
+blank window goes away. `zwift.sh` does this automatically. Just never use
+`CloseLauncher.exe`, and don't kill the launcher *before* the game has started —
+it's the thing that patches and downloads.
 
 ### `wineserver` may not be on your PATH
 
@@ -223,7 +235,7 @@ https://cdn.zwift.com/gameassets/Zwift_Updates_Root/Zwift_ver_cur.xml
 | `winetricks` does nothing, exits 0 | `wineserver` not on `PATH` |
 | Launcher window blank white/black | Normal. Log in inside the game. |
 | WebView2 `BrowserProcessExited` | `--in-process-gpu` passed alongside `--disable-gpu` |
-| Game dies when launcher closes | Expected — launcher is the game's parent |
+| Game dies when launcher closes | You used `CloseLauncher.exe` — it kills ZwiftApp by name. Kill the launcher PID instead. |
 | `.desktop` "has errors or points to a program without permissions" | A `Path=` key containing a colon |
 | Companion can't find the PC | Phone on a different subnet, or broadcast on a virtual bridge |
 | `pgrep` says the game isn't running | Its comm is `main`; match on args |
