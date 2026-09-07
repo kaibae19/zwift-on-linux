@@ -70,6 +70,15 @@ else
   bad "wineserver binary not found anywhere — winetricks would no-op silently"
 fi
 
+# 3b. The installer must actually get wine-staging, not silently fall back to the
+#     distro package — that fallback is legitimate at runtime but would hide a
+#     broken repo step here, and staging is what makes the launcher UI render.
+if [ -x /opt/wine-staging/bin/wine ]; then
+  ok "wine-staging installed ($(/opt/wine-staging/bin/wine --version 2>/dev/null))"
+else
+  bad "wine-staging NOT installed — installer fell back to distro wine (repo step broken?)"
+fi
+
 # 4. Zwift itself.
 [ -f "$ZDIR/ZwiftLauncher.exe" ] && ok "ZwiftLauncher.exe installed" \
                                  || bad "ZwiftLauncher.exe missing"
@@ -85,7 +94,9 @@ echo
 echo "--- launching ZwiftLauncher.exe (watching for exit 200) ---"
 export WINEPREFIX="$PREFIX" WINEDEBUG=-all
 export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--no-sandbox --disable-gpu"
-if ! command -v wineserver >/dev/null 2>&1; then
+if [ -x /opt/wine-staging/bin/wineserver ]; then
+  export PATH="/opt/wine-staging/bin:$PATH"
+elif ! command -v wineserver >/dev/null 2>&1; then
   for d in /usr/lib/*/wine /usr/lib/wine /usr/lib64/wine; do
     [ -x "$d/wineserver" ] && { export PATH="$d:$PATH"; break; }
   done

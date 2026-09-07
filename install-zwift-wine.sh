@@ -9,8 +9,12 @@
 # Usage: ./install-zwift-wine.sh
 #
 # Env:
-#   WINEPREFIX   prefix location   (default ~/Games/zwift/prefix)
-#   SKIP_DEPS=1  don't touch apt   (for non-apt distros — install deps yourself)
+#   WINEPREFIX      prefix location  (default ~/Games/zwift/prefix)
+#   WINE_CHANNEL    staging (default) | distro
+#                   staging adds the WineHQ repo and installs winehq-staging,
+#                   which is what makes the Zwift launcher UI render. On distro
+#                   wine the launcher is a blank window.
+#   SKIP_DEPS=1     don't touch apt  (for non-apt distros — install deps yourself)
 set -euo pipefail
 
 PREFIX="${WINEPREFIX:-$HOME/Games/zwift/prefix}"
@@ -23,23 +27,70 @@ export WINEARCH=win64
 export WINEDEBUG=-all
 
 # --- deps -------------------------------------------------------------------
+# Default to wine-staging from WineHQ, NOT the distro package. Staging's dcomp
+# patchset is what makes the Zwift launcher UI actually render; on distro wine it
+# is a blank window (see README). Set WINE_CHANNEL=distro to opt out.
+WINE_CHANNEL="${WINE_CHANNEL:-staging}"
+
+add_winehq_repo() {
+  local codename
+  codename=$(. /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-}")
+  [ -n "$codename" ] || codename=$(lsb_release -cs 2>/dev/null || true)
+  [ -n "$codename" ] || { echo "    cannot determine distro codename"; return 1; }
+
+  # Does WineHQ actually publish for this release?
+  if ! curl -fsSL -o /dev/null "https://dl.winehq.org/wine-builds/ubuntu/dists/$codename/"; then
+    echo "    WineHQ publishes nothing for '$codename'"
+    return 1
+  fi
+
+  echo "    adding WineHQ repo for $codename"
+  sudo mkdir -pm755 /etc/apt/keyrings
+  # The key is ASCII-armored; apt rejects it as an "unsupported filetype" unless
+  # dearmored, and the shipped .sources points Signed-By at the .key — repoint it.
+  curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
+    | sudo gpg --dearmor -o /etc/apt/keyrings/winehq-archive.gpg || return 1
+  sudo chmod 644 /etc/apt/keyrings/winehq-archive.gpg
+  sudo curl -fsSL -o "/etc/apt/sources.list.d/winehq-$codename.sources" \
+    "https://dl.winehq.org/wine-builds/ubuntu/dists/$codename/winehq-$codename.sources" || return 1
+  sudo sed -i 's#winehq-archive\.key#winehq-archive.gpg#' \
+    "/etc/apt/sources.list.d/winehq-$codename.sources"
+  sudo apt-get update -qq || return 1
+}
+
 if [ "${SKIP_DEPS:-0}" != "1" ]; then
   if command -v apt-get >/dev/null 2>&1; then
     echo "==> [1/6] packages"
-    sudo apt-get install -y --no-install-recommends \
-        wine winetricks cabextract
+    sudo apt-get install -y --no-install-recommends winetricks cabextract curl
+
+    if [ "$WINE_CHANNEL" = staging ] && add_winehq_repo \
+       && sudo apt-get install -y winehq-staging; then
+      echo "    installed wine-staging (launcher UI will render)"
+    else
+      [ "$WINE_CHANNEL" = staging ] && \
+        echo "    !! falling back to distro wine — the launcher window will be BLANK." && \
+        echo "       See README: log in inside the game, not the launcher."
+      sudo apt-get install -y --no-install-recommends wine
+    fi
   else
-    echo "==> [1/6] non-apt system: install wine, winetricks, cabextract yourself"
-    echo "    then re-run with SKIP_DEPS=1"
+    echo "==> [1/6] non-apt system: install wine (preferably wine-staging 11.16+),"
+    echo "    winetricks and cabextract yourself, then re-run with SKIP_DEPS=1"
     exit 1
   fi
 else
   echo "==> [1/6] skipping dependency install (SKIP_DEPS=1)"
 fi
 
-# GOTCHA: Debian/Ubuntu keep wineserver out of PATH. winetricks then silently
-# does NOTHING and still exits 0, printing only "warning: wineserver not found!".
-if ! command -v wineserver >/dev/null 2>&1; then
+# Prefer wine-staging if present — it installs to /opt/wine-staging/bin and does
+# NOT put itself on PATH. Checking it first matters: the distro's libwine may
+# still be installed, and picking its wineserver would mix wine versions.
+#
+# GOTCHA: Debian/Ubuntu keep wineserver out of PATH either way. winetricks then
+# silently does NOTHING and still exits 0, printing only
+# "warning: wineserver not found!".
+if [ -x /opt/wine-staging/bin/wineserver ]; then
+  export PATH="/opt/wine-staging/bin:$PATH"
+elif ! command -v wineserver >/dev/null 2>&1; then
   for d in /usr/lib/*/wine /usr/lib/wine /usr/lib64/wine /opt/wine*/bin; do
     if [ -x "$d/wineserver" ]; then export PATH="$d:$PATH"; break; fi
   done
@@ -50,6 +101,7 @@ command -v wineserver >/dev/null 2>&1 || {
   exit 1
 }
 echo "    wineserver: $(command -v wineserver)"
+echo "    wine:       $(wine --version 2>/dev/null || echo unknown)"
 
 # --- prefix -----------------------------------------------------------------
 echo "==> [2/6] 64-bit prefix at $PREFIX"
@@ -132,16 +184,29 @@ EOF
   echo "    wrote ~/Desktop/Zwift.desktop"
 fi
 
-cat <<EOF
-
-Done.  Launch with:  $LAUNCHER
-
-  * The launcher window will be BLANK white/black. That is normal — WebView2
-    cannot paint into the wine window. Log in INSIDE THE GAME, not the launcher.
-  * zwift.sh closes the launcher for you once the game is up. Closing it by PID
-    is safe; the game depends on wineserver, not the launcher. Do NOT use
-    Zwift's own CloseLauncher.exe — it kills ZwiftApp too and truncates your
-    activity .fit.
+echo
+echo "Done.  Launch with:  $LAUNCHER"
+echo
+if [ -x /opt/wine-staging/bin/wine ]; then
+  cat <<'EOF'
+  * wine-staging is installed, so the LAUNCHER UI WORKS. Log in there and click
+    Let's Go — the game receives an auth token and logs in automatically.
+  * The launcher starts blank and paints progressively over tens of seconds.
+    That is normal; don't assume it failed.
+  * zwift.sh leaves the launcher running so you can see update progress.
+EOF
+else
+  cat <<'EOF'
+  * Running on distro wine, so the launcher window will be BLANK white/black.
+    WebView2 cannot paint into the wine window. Log in INSIDE THE GAME.
+  * zwift.sh starts the game directly and closes the blank launcher once the
+    game is up. Closing it by PID is safe; the game depends on wineserver, not
+    the launcher.
+EOF
+fi
+cat <<'EOF'
+  * NEVER use Zwift's own CloseLauncher.exe — it kills ZwiftApp too and
+    truncates your in-progress activity .fit.
   * Sensors: use the Zwift Companion app. Direct BLE cannot work under wine.
     Your phone must be on the same subnet as this machine.
 EOF

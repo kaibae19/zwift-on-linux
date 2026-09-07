@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Base tooling the installer expects on a desktop system, plus Xvfb to give wine
 # a display and winbind for wine's ntlm_auth.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        sudo ca-certificates curl unzip xvfb winbind procps \
+        sudo ca-certificates curl gnupg unzip xvfb winbind procps \
     && rm -rf /var/lib/apt/lists/*
 
 # wine refuses to run as root, so test as an unprivileged user with passwordless

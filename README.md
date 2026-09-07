@@ -122,7 +122,9 @@ one of the practical reasons to prefer wine-staging.
 
 ## What the install actually does
 
-1. Installs `wine winetricks cabextract`
+1. Adds the WineHQ repo and installs **wine-staging** (set `WINE_CHANNEL=distro`
+   to use your distro's wine instead — the launcher will then be blank), plus
+   `winetricks cabextract`
 2. Creates a 64-bit prefix
 3. `winetricks -q dotnet48 d3dcompiler_47 win10` — **real .NET, not wine-mono**
 4. Runs Zwift's installer silently; its bundled VC++ redist, DirectX and
