@@ -54,6 +54,36 @@ proc_running() { ps -eo args --no-headers 2>/dev/null | grep -qE "$1"; }
 launcher_running() { proc_running '^(.*\\)?ZwiftLauncher\.exe([[:space:]]|$)'; }
 game_running()     { proc_running '^(.*\\)?ZwiftApp\.exe([[:space:]]|$)'; }
 
+# Zwift patches by streaming files into a temp Downloads folder, so a non-empty
+# folder means an update is in flight. Starting the game while the patcher is
+# rewriting its files risks launching a half-updated build, and any fixed timeout
+# is wrong when a patch can be several GB — so wait on *progress*, not a clock.
+DL_DIR="$WINEPREFIX/drive_c/users/$USER/AppData/Local/Temp/Zwift/Downloads"
+patch_in_progress() { [ -d "$DL_DIR" ] && [ -n "$(ls -A "$DL_DIR" 2>/dev/null)" ]; }
+dl_size() { du -sk "$DL_DIR" 2>/dev/null | cut -f1; }
+
+# Wait while a patch is downloading. Gives up only if the size stops changing for
+# STALL_LIMIT consecutive checks (i.e. genuinely stuck, not merely slow).
+wait_for_patch() {
+  patch_in_progress || return 0
+  echo "Update in progress — waiting for it to finish before starting the game."
+  local prev="" cur stall=0 STALL_LIMIT=40   # 40 x 15s = 10 min with no progress
+  while patch_in_progress; do
+    cur=$(dl_size)
+    if [ "$cur" = "$prev" ]; then
+      stall=$((stall+1))
+      [ "$stall" -ge "$STALL_LIMIT" ] && { echo "Patch appears stalled; continuing anyway."; return 0; }
+    else
+      [ -n "$prev" ] && echo "  patching... ${cur:-0} KB staged"
+      stall=0
+    fi
+    prev="$cur"
+    sleep 15
+  done
+  echo "Update finished."
+  sleep 5   # let the patcher move the last files into place
+}
+
 # Staging renders the launcher UI, so there is something worth clicking.
 if [ -z "${ZWIFT_MODE:-}" ]; then
   if [ -x /opt/wine-staging/bin/wine ]; then ZWIFT_MODE=launcher; else ZWIFT_MODE=autostart; fi
@@ -65,6 +95,8 @@ if ! launcher_running; then
 fi
 
 if [ "$ZWIFT_MODE" = autostart ]; then
+  # Never fire this mid-patch: the game's files may be being rewritten.
+  wait_for_patch
   # RunFromProcess starts the game from the launcher's process context and exits
   # immediately — it is not the game's parent, so we cannot just wait on it.
   wine RunFromProcess-x64.exe ZwiftLauncher.exe ZwiftApp.exe
@@ -77,6 +109,9 @@ fi
 appeared=0
 for _ in $(seq 1 450); do            # up to ~15 min (login takes as long as it takes)
   if game_running; then appeared=1; break; fi
+  # Don't burn the budget while an update is downloading — a big patch can take
+  # far longer than the poll window, and that is not a failure.
+  if patch_in_progress; then wait_for_patch; continue; fi
   sleep 2
 done
 [ "$appeared" -eq 1 ] || exit 0

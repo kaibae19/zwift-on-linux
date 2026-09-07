@@ -98,6 +98,21 @@ Force either with `ZWIFT_MODE=launcher` / `ZWIFT_MODE=autostart`.
 Note the launcher can take tens of seconds to finish painting on staging — it
 starts blank and fills in. Don't assume it failed.
 
+### What happens during an update
+
+Zwift streams patch files into a temp `Downloads` folder before moving them into
+place, so `zwift.sh` treats a non-empty folder as "update in flight" and waits on
+**progress**, not a clock — any fixed timeout is wrong when a patch can be
+several GB. It gives up only if the staged size stops changing for ~10 minutes,
+i.e. genuinely stuck rather than merely slow.
+
+This matters most in autostart mode: firing `RunFromProcess` while the patcher is
+rewriting the game's files could launch a half-updated build. The script now
+waits for the patch to finish first.
+
+In launcher mode you can just watch the progress in the launcher UI — which is
+one of the practical reasons to prefer wine-staging.
+
 ## What the install actually does
 
 1. Installs `wine winetricks cabextract`
