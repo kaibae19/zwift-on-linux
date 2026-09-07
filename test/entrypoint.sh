@@ -55,9 +55,17 @@ fi
 # 3. Guard against the silent-winetricks trap. NOTE: check the binary EXISTS,
 #    not whether it is on *this* shell's PATH — the installer exports PATH in its
 #    own process, so testing here would fail spuriously (it did, first run).
-if command -v wineserver >/dev/null 2>&1 \
-   || ls /usr/lib/*/wine/wineserver /opt/wine*/bin/wineserver >/dev/null 2>&1; then
-  ok "wineserver binary present (installer resolves it via PATH fixup)"
+# Test each candidate separately: `ls a b` returns non-zero when ANY argument is
+# missing, so a combined check fails even when wineserver plainly exists.
+# Unmatched globs stay literal and simply fail the -x test.
+ws=""
+for cand in $(command -v wineserver 2>/dev/null) \
+            /usr/lib/*/wine/wineserver /usr/lib/wine/wineserver \
+            /usr/lib64/wine/wineserver /opt/wine*/bin/wineserver; do
+  [ -x "$cand" ] && { ws="$cand"; break; }
+done
+if [ -n "$ws" ]; then
+  ok "wineserver binary present ($ws)"
 else
   bad "wineserver binary not found anywhere — winetricks would no-op silently"
 fi
