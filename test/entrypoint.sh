@@ -14,19 +14,19 @@ echo " Zwift-on-Linux install test"
 echo " $(. /etc/os-release; echo "$PRETTY_NAME")"
 echo "=============================================="
 
-# wine needs a display even for headless installs (winetricks, wineboot).
-Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
-export DISPLAY=:99
-sleep 3
-xdpyinfo -display :99 >/dev/null 2>&1 || echo "  NOTE: Xvfb may not be up; continuing"
+# Deliberately do NOT start Xvfb or set DISPLAY here. wine needs a display even
+# for an unattended install, and the installer is supposed to notice that and
+# start Xvfb itself. Providing one would mean never testing that path — which is
+# exactly how a headless install silently failed on real hardware.
+unset DISPLAY
 
 echo
 echo "--- running install-zwift-wine.sh ---"
 # Bounded: a hang here is a real failure mode. Inno's post-install step starts
 # "ZwiftLauncher.exe UpdateLaunch" and leaves it running, so any `wineserver -w`
 # in the installer blocks forever. Fail fast instead of burning the CI budget.
-timeout 1200 "$HOME/repo/install-zwift-wine.sh"
-rc=$?
+timeout 1200 "$HOME/repo/install-zwift-wine.sh" 2>&1 | tee /tmp/install.log
+rc=${PIPESTATUS[0]}
 if [ "$rc" -eq 124 ]; then
   echo "--- installer TIMED OUT after 20 min ---"
   echo "    likely a wineserver -w waiting on a process that never exits"
@@ -79,6 +79,16 @@ else
   bad "wine-staging NOT installed — installer fell back to distro wine (repo step broken?)"
 fi
 
+# 3c. The installer must cope with having no display by starting Xvfb itself.
+#     Without this the Zwift installer silently does nothing over SSH.
+if grep -q "started Xvfb on" /tmp/install.log 2>/dev/null; then
+  ok "installer detected no display and started Xvfb itself"
+elif grep -qE "display: :" /tmp/install.log 2>/dev/null; then
+  bad "installer found an existing display — the Xvfb fallback was not tested"
+else
+  bad "no display handling seen in installer output"
+fi
+
 # 4. Zwift itself.
 [ -f "$ZDIR/ZwiftLauncher.exe" ] && ok "ZwiftLauncher.exe installed" \
                                  || bad "ZwiftLauncher.exe missing"
@@ -92,6 +102,14 @@ fi
 #    display, no login) — 200 specifically is the wine-mono signature.
 echo
 echo "--- launching ZwiftLauncher.exe (watching for exit 200) ---"
+# The launcher needs a display to get far enough for this test to mean anything.
+# Without one it exits 0 immediately and "did not exit 200" passes trivially,
+# which would silently gut the wine-mono regression test. The installer's own
+# Xvfb is killed by its EXIT trap, so start one here.
+Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+SMOKE_XVFB=$!
+sleep 3
+export DISPLAY=:99
 export WINEPREFIX="$PREFIX" WINEDEBUG=-all
 export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--no-sandbox --disable-gpu"
 if [ -x /opt/wine-staging/bin/wineserver ]; then
@@ -117,9 +135,15 @@ if grep -q "Failed to get telemetry config" /tmp/launcher.log 2>/dev/null; then
   # Combined with exit 200 it is the wine-mono signature.
   echo "  NOTE: 'Failed to get telemetry config' seen (only fatal alongside exit 200)"
 fi
+# This one must be a hard assertion. If the launcher never initialises, the
+# exit-200 check above proves nothing.
 if grep -q "Launcher Version Number" /tmp/launcher.log 2>/dev/null; then
   ok "launcher initialised its UI ($(grep -o 'Launcher Version Number.*' /tmp/launcher.log | head -1))"
+else
+  bad "launcher never initialised — exit-200 check above is meaningless"
+  tail -10 /tmp/launcher.log 2>/dev/null | sed 's/^/    /'
 fi
+kill $SMOKE_XVFB 2>/dev/null
 
 echo
 echo "=============================================="

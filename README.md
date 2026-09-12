@@ -279,6 +279,30 @@ gsettings set org.gnome.mutter check-alive-timeout 60000
 # revert: gsettings reset org.gnome.mutter check-alive-timeout
 ```
 
+### Odd window sizes under Wayland (and a VRAM brake)
+
+On a Wayland/Xwayland session Zwift can be handed a nonsense surface size — a
+real case was `resize: 5370 x 2166` on a machine whose panel was 3840x2160, after
+which it hung. If you see a wildly wrong resolution in the game log, or want to
+cap how much the game tries to render on a small-VRAM card, pin wine to a fixed
+virtual desktop for the prefix:
+
+```bash
+wine reg add 'HKCU\Software\Wine\Explorer\Desktops' /v Default /t REG_SZ /d "1920x1080" /f
+wine reg add 'HKCU\Software\Wine\Explorer' /v Desktop /t REG_SZ /d "Default" /f
+```
+
+Zwift then renders into a bounded window regardless of the attached display.
+Remove it again with:
+
+```bash
+wine reg delete 'HKCU\Software\Wine\Explorer' /v Desktop /f
+```
+
+This is **optional and not set by the installer** — reach for it only if you hit
+the problem. It also caps resolution, which is a blunt but effective way to keep a
+2-4 GB card inside its VRAM budget.
+
 ### Fullscreen + minimize = black screen
 
 Alt-tabbing out of fullscreen Zwift under Xwayland loses the GL context and it
@@ -292,6 +316,25 @@ host. No `wine32:i386` required.
 ### `runfromprocess-x64.zip` 404s
 
 That URL is dead. Both binaries are inside the base `runfromprocess.zip`.
+
+### VRAM: 2 GB is not enough
+
+Measured on a Quadro P620 (2 GB): Zwift logs in, correctly identifies the card,
+selects its own *medium* profile — and still dies part-way through loading
+Watopia. The kernel says why:
+
+```
+[nvidia-drm] [GPU ID 0x...] Failed to allocate NVKMS video memory for GEM object
+```
+
+repeating at the exact moment the process disappears. A desktop session alone can
+hold ~430 MiB of a 2 GB card before the game starts. There is **no
+graphics-quality setting in `prefs.xml`** — Zwift computes its profile at runtime
+from a "Graphics Score", so you cannot force it lower.
+
+For reference, Zwift used ~4.9 GB on a 16 GB card. Treat **6 GB as a sensible
+floor**; that is a cheap card, and since Zwift is CPU-bound anyway there is no
+reason to buy more GPU than that.
 
 ## Sensors: use the Companion app
 

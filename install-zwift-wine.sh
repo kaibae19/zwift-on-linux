@@ -61,7 +61,8 @@ add_winehq_repo() {
 if [ "${SKIP_DEPS:-0}" != "1" ]; then
   if command -v apt-get >/dev/null 2>&1; then
     echo "==> [1/6] packages"
-    sudo apt-get install -y --no-install-recommends winetricks cabextract curl
+    sudo apt-get install -y --no-install-recommends winetricks cabextract curl \
+        xvfb x11-utils
 
     if [ "$WINE_CHANNEL" = staging ] && add_winehq_repo \
        && sudo apt-get install -y winehq-staging; then
@@ -74,7 +75,7 @@ if [ "${SKIP_DEPS:-0}" != "1" ]; then
     fi
   else
     echo "==> [1/6] non-apt system: install wine (preferably wine-staging 11.16+),"
-    echo "    winetricks and cabextract yourself, then re-run with SKIP_DEPS=1"
+    echo "    winetricks, cabextract and xvfb yourself, then re-run with SKIP_DEPS=1"
     exit 1
   fi
 else
@@ -102,6 +103,44 @@ command -v wineserver >/dev/null 2>&1 || {
 }
 echo "    wineserver: $(command -v wineserver)"
 echo "    wine:       $(wine --version 2>/dev/null || echo unknown)"
+
+# --- display ----------------------------------------------------------------
+# wine needs an X display even for an unattended install: wineboot, winetricks
+# and Zwift's Inno Setup installer are all GUI programs. Over SSH there usually
+# is none, and the failure is opaque — the Zwift installer silently does nothing
+# and you get "FATAL: Zwift did not install" with no mention of a display.
+# Found the hard way installing onto a headless box. Fall back to Xvfb.
+XVFB_PID=""
+cleanup_xvfb() { [ -n "${XVFB_PID:-}" ] && kill "$XVFB_PID" 2>/dev/null || true; }
+trap cleanup_xvfb EXIT
+
+display_works() {
+  [ -n "${DISPLAY:-}" ] || return 1
+  command -v xdpyinfo >/dev/null 2>&1 || return 0   # cannot test; assume usable
+  xdpyinfo >/dev/null 2>&1
+}
+
+if display_works; then
+  echo "    display: $DISPLAY"
+elif command -v Xvfb >/dev/null 2>&1; then
+  for n in 99 98 97 96; do
+    [ -e "/tmp/.X${n}-lock" ] && continue
+    Xvfb ":$n" -screen 0 1280x1024x24 >/dev/null 2>&1 &
+    XVFB_PID=$!
+    sleep 3
+    if kill -0 "$XVFB_PID" 2>/dev/null; then export DISPLAY=":$n"; break; fi
+    XVFB_PID=""
+  done
+  if [ -n "$XVFB_PID" ]; then
+    echo "    no usable display — started Xvfb on $DISPLAY for the install"
+  else
+    echo "    WARNING: could not start Xvfb; GUI installers will fail"
+  fi
+else
+  echo "    WARNING: no usable DISPLAY and Xvfb is not installed."
+  echo "             wine's GUI installers will fail. Install xvfb, or run this"
+  echo "             from a desktop session."
+fi
 
 # --- prefix -----------------------------------------------------------------
 echo "==> [2/6] 64-bit prefix at $PREFIX"
@@ -142,7 +181,14 @@ wine "$DL/ZwiftSetup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL || 
 sleep 5
 wineserver -k >/dev/null 2>&1 || true
 sleep 2
-[ -f "$ZDIR/ZwiftLauncher.exe" ] || { echo "FATAL: Zwift did not install to $ZDIR"; exit 1; }
+if [ ! -f "$ZDIR/ZwiftLauncher.exe" ]; then
+  echo "FATAL: Zwift did not install to $ZDIR"
+  echo "  The most common cause is no usable X display: Zwift's installer is a GUI"
+  echo "  program, so over SSH it exits without doing anything. DISPLAY=${DISPLAY:-<unset>}."
+  echo "  Install xvfb (this script will then use it automatically) or run from a"
+  echo "  desktop session."
+  exit 1
+fi
 
 # --- RunFromProcess ---------------------------------------------------------
 echo "==> [5/6] RunFromProcess (required to start the game from the launcher)"
