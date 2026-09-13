@@ -317,6 +317,20 @@ host. No `wine32:i386` required.
 
 That URL is dead. Both binaries are inside the base `runfromprocess.zip`.
 
+### Connect Bluetooth audio BEFORE launching
+
+Switching the default audio sink while Zwift is running will kill it. Observed:
+the game was running fine, a Bluetooth speaker was paired mid-ride, and at the
+moment the A2DP sink became default the game died — no segfault, wine simply
+unwound. The log showed `AUDIO_Event(...) failed!` beforehand and a burst of
+`GL error GL_INVALID_OPERATION` as it went.
+
+Relaunching with the same speaker **already connected** produced zero audio
+errors and working in-game sound.
+
+This matters on a trainer box, which is exactly where people pair a speaker or
+headphones. Connect audio first, then launch.
+
 ### VRAM: 2 GB is not enough
 
 Measured on a Quadro P620 (2 GB): Zwift logs in, correctly identifies the card,
@@ -335,6 +349,12 @@ from a "Graphics Score", so you cannot force it lower.
 For reference, Zwift used ~4.9 GB on a 16 GB card. Treat **6 GB as a sensible
 floor**; that is a cheap card, and since Zwift is CPU-bound anyway there is no
 reason to buy more GPU than that.
+
+Measured on an RTX 3050 6 GB replacing that P620, same machine: Zwift selects
+**ultra**, runs 45-60 FPS at 3373x1371, and sits at **4,930 of 6,144 MiB** — with
+the GPU only 36% busy at 41 W, i.e. still CPU-bound. Note 6 GB at ultra is
+comfortable but not roomy; at 4K (roughly 1.8x those pixels) expect to drop to
+High.
 
 ## Sensors: use the Companion app
 
